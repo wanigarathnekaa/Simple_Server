@@ -3,6 +3,11 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+
+import static java.nio.file.Files.createTempFile;
 
 public class Main {
     public static void main(String[] args) throws IOException {
@@ -56,10 +61,14 @@ public class Main {
                         filePath = "htdocs/index.php";
                     }
                     if (method.equals("GET") ) {
-                        if (filePath.equals("htdocs/add.php")) {
-                            String params = correctFilepath[1];
-                            System.out.println(params);
-                            executePhpScript(filePath, params,outputStream);
+                        if (filePath.endsWith(".php")) {
+                            if(correctFilepath.length>1) {
+                                String params = correctFilepath[1];
+                                executePhpScript(filePath, params, outputStream);
+                            } //for get method php forms
+                            else {
+                                executePhpScript(filePath, outputStream);
+                            }
                         } else {
                             // Serve static files
                             serveFile(filePath, outputStream);
@@ -125,7 +134,8 @@ public class Main {
         try {
             // Create a ProcessBuilder to run the PHP interpreter with the script file
             System.out.println(filePath);
-            ProcessBuilder pb = new ProcessBuilder("php", filePath ,params);
+            String tempFileName = createTempFile(filePath);
+            ProcessBuilder pb = new ProcessBuilder("php", tempFileName ,params);
 
             // Redirect error stream to the output stream
             pb.redirectErrorStream(true);
@@ -161,7 +171,70 @@ public class Main {
 
             // Close the output stream
             outputStream.close();
+
+            // Delete temp file
+            File tempFile = new File(tempFileName);
+            tempFile.delete();
         } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static String createTempFile (String filePath) throws IOException {
+        Writer fileWriter = null;
+        try {
+            Path fileName = Path.of(filePath);
+            String str = Files.readString(fileName);
+
+            String tempFileName = "./" + Instant.now().toEpochMilli() + ".php";
+            fileWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(tempFileName), "utf-8"));
+
+            // Append php argument reading line
+            str = "<?php parse_str(implode('&', array_slice($argv, 1)), $_GET); ?> \n\n" + str;
+            fileWriter.write(str);
+
+            return tempFileName;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        finally {
+            fileWriter.close();
+        }
+
+        return filePath;
+    }
+
+    private static void executePhpScript(String filePath, OutputStream outputStream) throws IOException {
+        try {
+            // Create a ProcessBuilder to run the PHP interpreter with the script file
+            ProcessBuilder processBuilder = new ProcessBuilder("php", filePath );
+
+            // Redirect error stream to the output stream
+            processBuilder.redirectErrorStream(true);
+
+            // Start the PHP process
+            Process process = processBuilder.start();
+
+            // Get the input stream of the PHP process (the output of the script)
+            InputStream scriptOutput = process.getInputStream();
+
+            // Create a buffer to read the script output
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+
+            // Write the HTTP response headers
+            String responseHeaders = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: text/html\r\n" +
+                    "Connection: close\r\n\r\n";
+            outputStream.write(responseHeaders.getBytes());
+
+            // Read and write the script output to the client
+            while ((bytesRead = scriptOutput.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            // Close the output stream
+            outputStream.close();
+        } catch (IOException e) {
             e.printStackTrace();
         }
     }
